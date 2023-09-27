@@ -1,35 +1,58 @@
-from fastapi import FastAPI, HTTPException, Path
-from fastapi.middleware.cors import CORSMiddleware
+import pyodbc
+from flask import Flask, jsonify, request
+from flask_cors import CORS
 
-from .database import cursor
+app = Flask(__name__)
+CORS(app)
 
-app = FastAPI()
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # Permitir todas as origens (domínios)
-    allow_credentials=True,
-    allow_methods=["*"],  # Permitir todos os métodos HTTP (GET, POST, etc.)
-    allow_headers=["*"],  # Permitir todos os cabeçalhos HTTP
-)
-@app.get("/contador/{carga}")
-def contador(carga: str = Path(..., title="Número da Carga")):
-    cursor.execute(f"""
-        SELECT DISTINCT
-            CONVERT(varchar, rom.Cod_filial_volume) + '-' +
-            CONVERT(varchar, rom.Serie_volume) + '-' +
-            CONVERT(varchar, rom.Num_volume) AS ID
-        FROM
-            tbSaidas s WITH(NOLOCK)
-        INNER JOIN
-            tbSaidasItemRom rom WITH(NOLOCK) ON s.Chave_fato = rom.Chave_fato
-        -- INNER JOIN tbVolume v WITH(NOLOCK) ON rom.Num_volume = v.Num_volume AND v.Serie_volume = rom.Serie_volume
-        WHERE
-            s.Serie_carga = '001' AND
-            s.Num_carga = '{carga}'
-    """)
-    
-    results = cursor.fetchall()
+# Função para criar uma conexão com o banco de dados
+def criar_conexao():
+    server = "192.168.248.24"
+    database = "SATKCONTAGEM"
+    username = 'svc_rastreabilidade'
+    password = '7rBVyTI@mu56'
+    string_conexao = (
+        'DRIVER={sql server};SERVER=' + server +
+        ';DATABASE=' + database +
+        ';UID=' + username +
+        ';PWD=' + password
+    )
+    conexao = pyodbc.connect(string_conexao)
+    conexao.setencoding(encoding='utf-8')
+    conexao.setdecoding(pyodbc.SQL_CHAR, encoding='utf-8')
+    conexao.setdecoding(pyodbc.SQL_WCHAR, encoding='utf-8')
+    return conexao
 
-    count = len(results)
-    
-    return {"count": count}
+@app.route("/contador/<carga>")
+def contador(carga):
+    try:
+        conexao = criar_conexao()
+        cursor = conexao.cursor()
+
+        cursor.execute(f"""
+            SELECT DISTINCT
+                CONVERT(varchar, rom.Cod_filial_volume) + '-' +
+                CONVERT(varchar, rom.Serie_volume) + '-' +
+                CONVERT(varchar, rom.Num_volume) AS ID
+            FROM
+                tbSaidas s WITH(NOLOCK)
+            INNER JOIN
+                tbSaidasItemRom rom WITH(NOLOCK) ON s.Chave_fato = rom.Chave_fato
+            WHERE
+                s.Serie_carga = '001' AND
+                s.Num_carga = '{carga}'
+        """)
+
+        results = cursor.fetchall()
+        count = len(results)
+
+        # Feche o cursor e a conexão após usar
+        cursor.close()
+        conexao.close()
+
+        return jsonify({"count": count})
+    except Exception as e:
+        return str(e), 500
+
+if __name__ == "__main__":
+    app.run()
